@@ -88,6 +88,13 @@ class BaseScan():
         version = match.group('version') if match else None
         return version
 
+    #https://github.com/SFB1089/scanreader/blob/7625ad397728aff57c32bd4ab38b35383440c52d/scanreader/scans.py#L536
+    @property  #added property to get the power percent
+    def power_percent(self):
+        match = re.search(r'hBeams\.powers = (?P<power>.*)', self.header)
+        power = float(match.group('power')) if match else None
+        return power
+
     @property
     def is_slow_stack(self):
         """ True if fastZ is disabled. All frames for one slice are recorded first before
