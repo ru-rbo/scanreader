@@ -925,3 +925,80 @@ class ScanMultiROI(NewerScan, BaseScan):
         item = np.squeeze(item, axis=tuple(squeeze_dims))
 
         return item
+
+class LBMScanMultiROI(ScanMultiROI):
+    """
+    A subclass of ScanMultiROI that adds the ability to cut off pixels from each X slice 
+    when images are loaded, adjusting the dimensions of the image data.
+
+    Parameters
+    ----------
+    join_contiguous : bool
+        Whether contiguous fields are joined into a single field.
+    x_cut : int, optional
+        The number of pixels to cut from the start of each X slice. Default is 4.
+
+    Attributes
+    ----------
+    x_cut : int
+        The number of pixels to cut from the start of each X slice.
+    """
+    def __init__(self, join_contiguous, x_cut=4):
+        super().__init__(join_contiguous)
+        self.x_cut = x_cut
+
+    def _create_fields(self):
+        """
+        Override the _create_fields method to adjust the X slices of each field, cutting off
+        a specified number of pixels from the start of each X slice.
+
+        Returns
+        -------
+        list
+            A list of Field objects with adjusted X slices.
+
+        Raises
+        ------
+        RuntimeError
+            If the calculated number of lines exceeds the page height at any scanning depth.
+        """
+        fields = []
+        previous_lines = 0
+        for slice_id, scanning_depth in enumerate(self.scanning_depths):
+            next_line_in_page = 0  # each slice is one tiff page
+            for roi_id, roi in enumerate(self.rois):
+                new_field = roi.get_field_at(scanning_depth)
+
+                if new_field is not None:
+                    if next_line_in_page + new_field.height > self._page_height:
+                        error_msg = ('Overestimated number of fly to lines ({}) at '
+                                     'scanning depth {}'.format(self._num_fly_to_lines,
+                                                                scanning_depth))
+                        raise RuntimeError(error_msg)
+
+                    # Adjust the x slices to cut off x_cut pixels from the start of each x slice
+                    new_field.yslices = [slice(next_line_in_page, next_line_in_page + new_field.height)]
+                    new_field.xslices = [slice(self.x_cut, new_field.width - self.x_cut)]  # apply the x_cut to both ends
+
+                    # Set output xslice and yslice (where to paste it in output)
+                    new_field.output_yslices = [slice(0, new_field.height)]
+                    new_field.output_xslices = [slice(0, new_field.width - 2 * self.x_cut)]  # adjust the output width for both cuts
+
+                    # Set slice and roi id
+                    new_field.slice_id = slice_id
+                    new_field.roi_ids = [roi_id]
+
+                    # Set timing offsets
+                    offsets = self._compute_offsets(new_field.height, previous_lines + next_line_in_page)
+                    new_field.offsets = [offsets]
+
+                    # Compute next starting y
+                    next_line_in_page += new_field.height + self._num_fly_to_lines
+
+                    # Add field to fields
+                    fields.append(new_field)
+
+            # Accumulate overall number of scanned lines
+            previous_lines += self._num_lines_between_fields
+
+        return fields
