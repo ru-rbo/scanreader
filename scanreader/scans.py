@@ -763,6 +763,12 @@ class ScanMultiROI(NewerScan, BaseScan):
         microns = (degrees * float(match.group('deg2um_factor'))) if match else None
         return microns
 
+    def _microns_to_decrees(self, microns):
+        """ Convert microns to scan angle degrees using the objective resolution."""
+        match = re.search(r'objectiveResolution = (?P<deg2um_factor>.*)', self.header)
+        degrees = (microns / float(match.group('deg2um_factor'))) if match else None
+        return degrees
+
     def read_data(self, filenames, dtype):
         """ Set the header, create rois and fields (joining them if necessary)."""
         super().read_data(filenames, dtype)
@@ -978,11 +984,14 @@ class LBMScanMultiROI(ScanMultiROI):
 
                     # Adjust the x slices to cut off x_cut pixels from the start of each x slice
                     new_field.yslices = [slice(next_line_in_page, next_line_in_page + new_field.height)]
-                    new_field.xslices = [slice(self.x_cut, new_field.width - self.x_cut)]  # apply the x_cut to both ends
+                    new_field.xslices = [slice(self.x_cut - 1, new_field.width - self.x_cut)]  # apply the x_cut to both ends
 
                     # Set output xslice and yslice (where to paste it in output)
                     new_field.output_yslices = [slice(0, new_field.height)]
-                    new_field.output_xslices = [slice(0, new_field.width - 2 * self.x_cut)]  # adjust the output width for both cuts
+                    new_field.output_xslices = [slice(0, new_field.width - (self.x_cut*2))]  
+
+                    new_field.width = (new_field.width - (2 * self.x_cut))
+                    new_field.width_in_degrees = self._microns_to_decrees(new_field.width)
 
                     # Set slice and roi id
                     new_field.slice_id = slice_id
