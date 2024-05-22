@@ -23,31 +23,34 @@ BaseScan
                 Scan2020
     ScanMultiRoi
 """
+import itertools
+import re
+
+import numpy as np
 from tifffile import TiffFile
 from tifffile.tifffile import matlabstr2py
-import numpy as np
-import re
-import itertools
+
 from . import utils
-from .multiroi import ROI
 from .exceptions import FieldDimensionMismatch
+from .multiroi import ROI
+
 
 class BaseScan():
     """ Properties and methods shared among all scan versions.
 
-    Scan objects are a collection of recording fields: rectangular planes at a given x, y,
+    Scan objects are a collection of recording fields: rectangular planes at a given x_center_coordinate, y_center_coordinate,
     z position in the scan recorded in a number of channels during a preset amount of
     time. All fields have the same number of channels and number of frames.
     Scan objects are:
-        indexable: scan[field, y, x, channel, frame] works as long as the fields' spatial
-            dimensions (y, x) match.
+        indexable: scan[field, y_center_coordinate, x_center_coordinate, channel, frame] works as long as the fields' spatial
+            dimensions (y_center_coordinate, x_center_coordinate) match.
         iterable: 'for field in scan:' iterates over all fields (4-d array) in the scan.
 
     Examples:
         scan.version                ScanImage version of the scan.
         scan[:, :, :3, :, :1000]    5-d numpy array with the first 1000 frames of the
-            first 3 fields (if x, y dimensions match).
-        for field in scan:          generates 4-d numpy arrays ([y, x, channels, frames]).
+            first 3 fields (if x_center_coordinate, y_center_coordinate dimensions match).
+        for field in scan:          generates 4-d numpy arrays ([y_center_coordinate, x_center_coordinate, channels, frames]).
 
     Note:
         We use the word 'frames' as in video frames, i.e., number of timesteps the scan
@@ -243,8 +246,8 @@ class BaseScan():
 
     @property
     def motor_position_at_zero(self):
-        """ Motor position (x, y and z in microns) corresponding to the scan's (0, 0, 0)
-        point. For non-multiroi scans, (x=0, y=0) marks the center of the FOV."""
+        """ Motor position (x_center_coordinate, y_center_coordinate and z in microns) corresponding to the scan's (0, 0, 0)
+        point. For non-multiroi scans, (x_center_coordinate=0, y_center_coordinate=0) marks the center of the FOV."""
         match = re.search(r'hMotors\.motorPosition = (?P<motor_position>.*)', self.header)
         motor_position = matlabstr2py(match.group('motor_position'))[:3] if match else None
         return motor_position
@@ -320,7 +323,7 @@ class BaseScan():
         return 0 if self.num_fields is None else self.num_fields
 
     def __getitem__(self, key):
-        """ Index scans by field, y, x, channels, frames. Supports integer, slice and
+        """ Index scans by field, y_center_coordinate, x_center_coordinate, channels, frames. Supports integer, slice and
         array/tuple/list of integers as indices."""
         raise NotImplementedError('Subclasses of BaseScan must implement this method')
 
@@ -344,7 +347,7 @@ class BaseScan():
     def _read_pages(self, slice_list, channel_list, frame_list, yslice=slice(None),
                     xslice=slice(None)):
         """ Reads the tiff pages with the content of each slice, channel, frame
-        combination and slices them in the y, x dimension.
+        combination and slices them in the y_center_coordinate, x_center_coordinate dimension.
 
         Each tiff page holds a single depth/channel/frame combination. For slow stacks,
         channels change first, timeframes change second and slices/depths change last.
@@ -368,8 +371,8 @@ class BaseScan():
             slice_list: List of integers. Slices to read.
             channel_list: List of integers. Channels to read.
             frame_list: List of integers. Frames to read
-            yslice: Slice object. How to slice the pages in the y axis.
-            xslice: Slice object. How to slice the pages in the x axis.
+            yslice: Slice object. How to slice the pages in the y_center_coordinate axis.
+            xslice: Slice object. How to slice the pages in the x_center_coordinate axis.
 
         Returns:
             A 5-D array (num_slices, output_height, output_width, num_channels, num_frames).
@@ -379,7 +382,7 @@ class BaseScan():
                 dimension will have four slices: [1, 0, 2, 0].
 
         Note:
-            We use slices in y, x for memory efficiency, If lists were passed another copy
+            We use slices in y_center_coordinate, x_center_coordinate for memory efficiency, If lists were passed another copy
             of the pages will be needed coming up to 3x the amount of data we actually
             want to read (the output array, the read pages and the list-sliced pages).
             Slices limit this to 2x (output array and read pages which are sliced in place).
@@ -420,7 +423,7 @@ class BaseScan():
                 pages[global_indices] = tiff_file.asarray(key=file_indices)[..., yslice, xslice]
             start_page += len(tiff_file.pages)
 
-        # Reshape the pages into (slices, y, x, channels, frames)
+        # Reshape the pages into (slices, y_center_coordinate, x_center_coordinate, channels, frames)
         new_shape = [len(frame_list), len(slice_list), len(channel_list), out_height, out_width]
         pages = pages.reshape(new_shape).transpose([1, 3, 4, 2, 0])
 
@@ -436,7 +439,8 @@ class BaseScan():
         return num_lines
 
     def _compute_offsets(self, field_height, start_line):
-        """ Computes the time offsets at which a given field was recorded.
+        """
+        Computes the time offsets at which a given field was recorded.
 
         Computes the time delay at which each pixel was recorded using the start of the
         scan as zero. It first creates an image with the number of lines scanned until
@@ -445,7 +449,7 @@ class BaseScan():
         :param int field_height: Height of the field.
         :param int start_line: Line at which this field starts.
 
-        :returns: A field_height x page_width mask with time offsets in seconds.
+        :returns: A field_height x_center_coordinate page_width mask with time offsets in seconds.
         """
         # Compute offsets within a line (negligible if seconds_per_line is small)
         max_angle = (np.pi / 2) * self.temporal_fill_fraction
@@ -472,7 +476,7 @@ class ScanLegacy(BaseScan):
 
 class BaseScan5(BaseScan):
     """ ScanImage 5 scans: one field per scanning depth and all fields have the same
-    height and width."""
+    height_px and width_px."""
 
     @property
     def num_fields(self):
@@ -520,7 +524,7 @@ class BaseScan5(BaseScan):
 
     @property
     def _y_angle_scale_factor(self):
-        """ Scan angles in y are scaled by this factor, shrinking the angle range."""
+        """ Scan angles in y_center_coordinate are scaled by this factor, shrinking the angle range."""
         match = re.search(r'hRoiManager\.scanAngleMultiplierSlow = (?P<angle_scaler>.*)',
                           self.header)
         y_angle_scaler = float(match.group('angle_scaler')) if match else None
@@ -528,14 +532,14 @@ class BaseScan5(BaseScan):
 
     @property
     def _x_angle_scale_factor(self):
-        """ Scan angles in x are scaled by this factor, shrinking the angle range."""
+        """ Scan angles in x_center_coordinate are scaled by this factor, shrinking the angle range."""
         match = re.search(r'hRoiManager\.scanAngleMultiplierFast = (?P<angle_scaler>.*)',
                           self.header)
         x_angle_scaler = float(match.group('angle_scaler')) if match else None
         return x_angle_scaler
 
     def __getitem__(self, key):
-        """ In non-multiROI, all fields have the same x, y dimensions. """
+        """ In non-multiROI, all fields have the same x_center_coordinate, y_center_coordinate dimensions. """
         # Fill key to size 5 (raises IndexError if more than 5)
         full_key = utils.fill_key(key, num_dimensions=5)
 
@@ -562,7 +566,7 @@ class BaseScan5(BaseScan):
         # Read the required pages
         pages = self._read_pages(field_list, channel_list, frame_list)
 
-        # Index in y, x using the original key (usually slices) for memory efficiency.
+        # Index in y_center_coordinate, x_center_coordinate using the original key (usually slices) for memory efficiency.
         if isinstance(full_key[1], list) and isinstance(full_key[2], list):
             # Our behaviour for lists is to take the submatrix defined by those indices.
             ys = [[y] for y in y_list] # ys as nested lists does the trick
@@ -708,11 +712,11 @@ class ScanMultiROI(NewerScan, BaseScan):
 
     @property
     def field_heights(self):
-        return [field.height for field in self.fields]
+        return [field.height_px for field in self.fields]
 
     @property
     def field_widths(self):
-        return [field.width for field in self.fields]
+        return [field.width_px for field in self.fields]
 
     @property
     def field_depths(self):
@@ -769,6 +773,24 @@ class ScanMultiROI(NewerScan, BaseScan):
         degrees = (microns / float(match.group('deg2um_factor'))) if match else None
         return degrees
 
+    def _degrees_to_pixels(self, degrees, num_pixels):
+        """ Convert scan angle degrees to pixels using the objective resolution."""
+        # first, get the microns
+        microns = self._degrees_to_microns(degrees)
+        pixels = microns / num_pixels
+        return pixels
+
+    def _pixels_to_degrees(self, pixels, num_pixels):
+        """ Convert pixels to scan angle degrees using the objective resolution."""
+        microns = pixels * num_pixels
+        degrees = self._microns_to_decrees(microns)
+        return degrees
+
+    def _pixels_to_microns(self, pixels, num_pixels):
+        """ Convert pixels to microns using the objective resolution."""
+        microns = pixels * num_pixels
+        return microns
+
     def read_data(self, filenames, dtype):
         """ Set the header, create rois and fields (joining them if necessary)."""
         super().read_data(filenames, dtype)
@@ -797,7 +819,7 @@ class ScanMultiROI(NewerScan, BaseScan):
                 new_field = roi.get_field_at(scanning_depth)
 
                 if new_field is not None:
-                    if next_line_in_page + new_field.height > self._page_height:
+                    if next_line_in_page + new_field.height_px > self._page_height:
                         error_msg = ('Overestimated number of fly to lines ({}) at '
                                      'scanning depth {}'.format(self._num_fly_to_lines,
                                                                 scanning_depth))
@@ -805,24 +827,24 @@ class ScanMultiROI(NewerScan, BaseScan):
 
                     # Set xslice and yslice (from where in the page to cut it)
                     new_field.yslices = [slice(next_line_in_page, next_line_in_page
-                                               + new_field.height)]
-                    new_field.xslices = [slice(0, new_field.width)]
+                                               + new_field.height_px)]
+                    new_field.xslices = [slice(0, new_field.width_px)]
 
                     # Set output xslice and yslice (where to paste it in output)
-                    new_field.output_yslices = [slice(0, new_field.height)]
-                    new_field.output_xslices = [slice(0, new_field.width)]
+                    new_field.output_yslices = [slice(0, new_field.height_px)]
+                    new_field.output_xslices = [slice(0, new_field.width_px)]
 
                     # Set slice and roi id
                     new_field.slice_id = slice_id
                     new_field.roi_ids = [roi_id]
 
                     # Set timing offsets
-                    offsets = self._compute_offsets(new_field.height, previous_lines +
-                                                                      next_line_in_page)
+                    offsets = self._compute_offsets(new_field.height_px, previous_lines +
+                                                    next_line_in_page)
                     new_field.offsets = [offsets]
 
-                    # Compute next starting y
-                    next_line_in_page += new_field.height + self._num_fly_to_lines
+                    # Compute next starting y_center_coordinate
+                    next_line_in_page += height0 + self._num_fly_to_lines
 
                     # Add field to fields
                     fields.append(new_field)
@@ -839,7 +861,7 @@ class ScanMultiROI(NewerScan, BaseScan):
         same size in their touching axis. Process is iterative: it tries to join each
         field with the remaining ones (checked in order); at the first union it will break
         and restart the process at the first field. When two fields are joined, it deletes
-        the one appearing last and modifies info such as field height, field width and
+        the one appearing last and modifies info such as field height_px, field width_px and
         slices in the one appearing first.
 
         Any rectangular area in the scan formed by the union of two or more fields which
@@ -866,7 +888,7 @@ class ScanMultiROI(NewerScan, BaseScan):
 
     def __getitem__(self, key):
         # Fill key to size 5 (raises IndexError if more than 5)
-        full_key = utils.fill_key(key, num_dimensions=5)
+        full_key = utils.fill_key(key, num_dimensions=5)  # key represents the scanfield index
 
         # Check index types are valid
         for i, index in enumerate(full_key):
@@ -913,7 +935,7 @@ class ScanMultiROI(NewerScan, BaseScan):
                 pages = self._read_pages([field.slice_id], channel_list, frame_list,
                                          yslice, xslice)
 
-                # Get x, y indices that need to be accessed in this subfield
+                # Get x_center_coordinate, y_center_coordinate indices that need to be accessed in this subfield
                 y_range = range(output_yslice.start, output_yslice.stop)
                 x_range = range(output_xslice.start, output_xslice.stop)
                 ys = [[y - output_yslice.start] for y in y_list if y in y_range]
@@ -922,7 +944,7 @@ class ScanMultiROI(NewerScan, BaseScan):
                 output_xs = [index for index, x in enumerate(x_list) if x in x_range]
                 # ys as nested lists are needed for numpy to slice them correctly
 
-                # Index pages in y, x
+                # Index pages in y_center_coordinate, x_center_coordinate
                 item[i, output_ys, output_xs] = pages[0, ys, xs]
 
         # If original index was an integer, delete that axis (as in numpy indexing)
@@ -942,16 +964,22 @@ class LBMScanMultiROI(ScanMultiROI):
     join_contiguous : bool
         Whether contiguous fields are joined into a single field.
     x_cut : int, optional
-        The number of pixels to cut from the start of each X slice. Default is 4.
+        The number of pixels to cut from the start of each X slice. Default is no pixels being trimmed.
 
     Attributes
     ----------
-    x_cut : int
+    x_cut : sequence, optional
         The number of pixels to cut from the start of each X slice.
+    y_cut : sequence, optional
+        The number of pixels to cut from the start of each Y slice.
     """
-    def __init__(self, join_contiguous, x_cut=4):
+    def __init__(self, join_contiguous, x_cut=(0,0), y_cut=(0,0)):
         super().__init__(join_contiguous)
+        if x_cut is not None:
+            assert hasattr(x_cut, '__len__'), 'x_cut must be a countable sequence'
+            assert x_cut[0] >= 0 and x_cut[1] >= 0, 'x_cut values must be non-negative'
         self.x_cut = x_cut
+        self.y_cut = y_cut
 
     def _create_fields(self):
         """
@@ -966,43 +994,69 @@ class LBMScanMultiROI(ScanMultiROI):
         Raises
         ------
         RuntimeError
-            If the calculated number of lines exceeds the page height at any scanning depth.
+            If the calculated number of lines exceeds the page height_px at any scanning depth.
+
+        .. note::
+            self._page_height (145 pixels normally) is going to be > scanfield height_px by a pixel or two
+
         """
+        # how many pixels to trim on each edge of the image
+        # note that slicing off pixels requires subtracting from the width_px and height_px
+        # as to not exceed the original dimensions and account for 0-based indexing
+        # TODO: add support for trimming the top and bottom of the image
+        # TODO; add checks that a proper slice was given as an argument
+
         fields = []
         previous_lines = 0
         for slice_id, scanning_depth in enumerate(self.scanning_depths):
-            next_line_in_page = 0  # each slice is one tiff page
+            next_line_in_page = 0
             for roi_id, roi in enumerate(self.rois):
                 new_field = roi.get_field_at(scanning_depth)
 
                 if new_field is not None:
-                    if next_line_in_page + new_field.height > self._page_height:
+                    if next_line_in_page + new_field.height_px > self._page_height:
                         error_msg = ('Overestimated number of fly to lines ({}) at '
                                      'scanning depth {}'.format(self._num_fly_to_lines,
                                                                 scanning_depth))
                         raise RuntimeError(error_msg)
 
-                    # Adjust the x slices to cut off x_cut pixels from the start of each x slice
-                    new_field.yslices = [slice(next_line_in_page, next_line_in_page + new_field.height)]
-                    new_field.xslices = [slice(self.x_cut - 1, new_field.width - self.x_cut)]  # apply the x_cut to both ends
+                    # Adjust the x_center_coordinate slices to cut off x_cut pixels from the start of each x_center_coordinate slice
+                    # maintain the original dimensions of the image
+                    height0 = new_field.height_px
+                    width0 = new_field.width_px
 
-                    # Set output xslice and yslice (where to paste it in output)
-                    new_field.output_yslices = [slice(0, new_field.height)]
-                    new_field.output_xslices = [slice(0, new_field.width - (self.x_cut*2))]  
+                    new_height_px = height0 - (self.y_cut[0] + self.y_cut[1])
+                    new_width_px = width0 - (self.x_cut[0] + self.x_cut[1])
 
-                    new_field.width = (new_field.width - (2 * self.x_cut))
-                    new_field.width_in_degrees = self._microns_to_decrees(new_field.width)
+                    new_deg = self._microns_to_decrees(new_width_px)
+                    new_micron = self._degrees_to_microns(new_deg)
+                    new_px = self._degrees_to_pixels(new_deg, new_width_px)
 
-                    # Set slice and roi id
+                    new_field.yslices = [slice(
+                        next_line_in_page + self.y_cut[0] - 1,  # top cut
+                        next_line_in_page + new_field.height_px - self.y_cut[1]  # bottom cut
+                    )]
+
+                    new_field.xslices = [slice(self.x_cut[0] - 1, new_field.width_px - self.x_cut[1])]  # apply the x_cut to both ends
+
+                    # adjust scanfield to reflect newly sliced image dimensions
+                    new_field.width_px = (new_field.width_px - (self.x_cut[0] + self.x_cut[1]))
+                    new_field.height_px = (new_field.height_px - (self.y_cut[0] + self.y_cut[1]))
+
+                    new_field.width_in_degrees = self._microns_to_decrees(new_field.width_px)
+                    new_field.height_in_degrees = self._microns_to_decrees(new_field.height_px)
+
+                    # Set output xslice and yslice (where to paste the image in our final/stitched ROI)
+                    new_field.output_yslices = [slice(0, new_field.height_px)]
+                    new_field.output_xslices = [slice(0, new_field.width_px)]
+
                     new_field.slice_id = slice_id
                     new_field.roi_ids = [roi_id]
 
                     # Set timing offsets
-                    offsets = self._compute_offsets(new_field.height, previous_lines + next_line_in_page)
+                    offsets = self._compute_offsets(new_field.height_px, previous_lines + next_line_in_page)
                     new_field.offsets = [offsets]
-
-                    # Compute next starting y
-                    next_line_in_page += new_field.height + self._num_fly_to_lines
+                    next_line_in_page += height0 + self._num_fly_to_lines
 
                     # Add field to fields
                     fields.append(new_field)
