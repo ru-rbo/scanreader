@@ -190,7 +190,7 @@ var Stemmer = function() {
       w = w.replace(re,"");
     }
 
-    // and turn initial Y back to y
+    // and turn initial Y back to y_center_coordinate
     if (firstch == "y")
       w = firstch.toLowerCase() + w.substr(1);
     return w;

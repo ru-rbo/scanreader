@@ -1,0 +1,14 @@
+LICENSE
+README.md
+setup.py
+scanreader/__init__.py
+scanreader/core.py
+scanreader/exceptions.py
+scanreader/multiroi.py
+scanreader/scans.py
+scanreader/utils.py
+scanreader.egg-info/PKG-INFO
+scanreader.egg-info/SOURCES.txt
+scanreader.egg-info/dependency_links.txt
+scanreader.egg-info/requires.txt
+scanreader.egg-info/top_level.txt

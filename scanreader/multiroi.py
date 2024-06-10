@@ -3,17 +3,32 @@ import numpy as np
 
 
 class ROI:
-    """ Holds ROI info and computes an xy plane (scanfield) at a given z.
+    """
+    Holds ROI (Region of Interest) information and computes a two-dimensional scanfield at a specified depth.
 
-    ScanImage defines a ROI as the interpolation between a set of scanfields. See their
-    docs for details.
+    ScanImage defines an ROI as the interpolation between a set of scanfields. For more details, see their documentation.
+
+    Parameters
+    ----------
+    roi_info : dict
+        A dictionary containing the definition of the ROI extracted from the TIFF header.
+
+    Attributes
+    ----------
+    roi_info : dict
+        Stores the original ROI information from the TIFF file.
+    _scanfields : list of Scanfield
+        Cached list of scanfields that form this ROI.
     """
     def __init__(self, roi_info):
-        """ Read the scanfields that define this ROI and other required info.
+        """
+        Initialize the ROI with information from the TIFF header.
 
-        Args:
-            roi_info: A dictionary containing the definition of the roi extracted from the
-                tiff header.
+        Parameters
+        ----------
+        roi_info : dict
+            The ROI definition as extracted from the TIFF header.
+
         """
         self.roi_info = roi_info
         self._scanfields = None
@@ -29,7 +44,16 @@ class ROI:
         return bool(self.roi_info['discretePlaneMode'])
 
     def _create_scanfields(self):
-        """ Create all the scanfields that form this ROI. """
+        """
+        Create all the scanfields that form this ROI. Each roi can have multiple scanfields, each with its own depth.
+
+        .. note::
+            This method is called only once, when the scanfields are first accessed.
+            This namespace only has access to frame-specific metadata, so it cannot convert degrees to microns
+            as the objective resolution is attached to the .tiff header:
+
+            `header['SI.objectiveResolution']`
+        """
         # Get scanfield configuration info
         scanfield_infos = self.roi_info['scanfields']
         if not isinstance(scanfield_infos, list):
@@ -43,14 +67,17 @@ class ROI:
         scanfields = []
         for scanfield_info, scanfield_depth in zip(scanfield_infos, scanfield_depths):
             # if scanfield_info['enable']: # this is always 1 even if ROI is disabled
-            # Get scanfield info
-            width, height = scanfield_info['pixelResolutionXY']
+
+            # tuple with the number of pixels in (x_center_coordinate, y_center_coordinate)
+            width_px, height_px = scanfield_info['pixelResolutionXY']
+            # tuple with the center of the ROI in deg(x_center_coordinate, y_center_coordinate)
             xcenter, ycenter = scanfield_info['centerXY']
+            # tuple with the size of the ROI in deg(x_center_coordinate, y_center_coordinate)
             size_in_x, size_in_y = scanfield_info['sizeXY']
 
             # Create scanfield
-            new_scanfield = Scanfield(height=height, width=width, depth=scanfield_depth,
-                                      y=ycenter, x=xcenter, height_in_degrees=size_in_y,
+            new_scanfield = Scanfield(height_px=height_px, width_px=width_px, depth=scanfield_depth,
+                                      y_center_coordinate=ycenter, x_center_coordinate=xcenter, height_in_degrees=size_in_y,
                                       width_in_degrees=size_in_x)
             scanfields.append(new_scanfield)
 
@@ -60,7 +87,8 @@ class ROI:
         return scanfields
 
     def get_field_at(self, scanning_depth):
-        """ Interpolates between the ROI scanfields to generate the 2-d field at the
+        """ 
+        Interpolates between the ROI scanfields to generate the 2-d field at the
         desired depth.
 
         Args:
@@ -91,23 +119,28 @@ class ROI:
                 if scanning_depth in valid_range:
                     field = Field()
 
-                    scanfield_heights = [sf.height for sf in self.scanfields]
-                    field.height = np.interp(scanning_depth, scanfield_depths,
-                                             scanfield_heights)
-                    field.height = int(round(field.height / 2)) * 2 # round to the closest even
+                    scanfield_heights = [sf.height_px for sf in self.scanfields]
+                    field.height_px = np.interp(scanning_depth, scanfield_depths,
+                                                scanfield_heights)
+                    field.height_px = int(round(field.height_px / 2)) * 2 # round to the closest even
 
-                    scanfield_widths = [sf.width for sf in self.scanfields]
-                    field.width = np.interp(scanning_depth, scanfield_depths,
-                                            scanfield_widths)
-                    field.width = int(round(field.width / 2)) * 2 # round to the closest even
+                    scanfield_widths = [sf.width_px for sf in self.scanfields]
+
+                    # The x_center_coordinate - coordinate sequence is expected to be increasing, but this is not explicitly enforced.
+                    # if the sequence `xp` is non-increasing, interpolation results are meaningless.
+                    assert np.all(np.diff(xp) > 0)  # check that the depths are in increasing order
+
+                    field.width_px = np.interp(scanning_depth, scanfield_depths,
+                                               scanfield_widths)
+                    field.width_px = int(round(field.width_px / 2)) * 2 # round to the closest even
 
                     field.depth = scanning_depth
 
-                    scanfield_ys = [sf.y for sf in self.scanfields]
-                    field.y = np.interp(scanning_depth, scanfield_depths, scanfield_ys)
+                    scanfield_ys = [sf.y_center_coordinate for sf in self.scanfields]
+                    field.y_center_coordinate = np.interp(scanning_depth, scanfield_depths, scanfield_ys)
 
-                    scanfield_xs = [sf.x for sf in self.scanfields]
-                    field.x = np.interp(scanning_depth, scanfield_depths, scanfield_xs)
+                    scanfield_xs = [sf.x_center_coordinate for sf in self.scanfields]
+                    field.x_center_coordinate = np.interp(scanning_depth, scanfield_depths, scanfield_xs)
 
                     scanfield_heights = [sf.height_in_degrees for sf in self.scanfields]
                     field.height_in_degrees = np.interp(scanning_depth, scanfield_depths,
@@ -121,76 +154,158 @@ class ROI:
 
 
 class Scanfield:
-    """ Small container for scanfield information. Used to define ROIs.
-
-    Attributes:
-        height: height of the field in pixels.
-        width: width of the field in pixels.
-        depth: depth at which this field was recorded (in microns relative to absolute z).
-        y, x: Coordinates of the center of the field in the scan (in scan angle degrees).
-        height_in_degrees: height of the field in degrees of the scan angle.
-        width_in_degrees: width of the field in degrees of the scan angle.
     """
-    def __init__(self, height=None, width=None, depth=None, y=None, x=None,
+    Container for information about a scanfield, which defines a part of an ROI.
+
+    Attributes
+    ----------
+    height : int
+        Height of the field in pixels.
+    width : int
+        Width of the field in pixels.
+    depth : float
+        Depth at which this field was recorded, in microns relative to the absolute Z-coordinate.
+    y_center_coordinate : float
+        Y-coordinate of the center of the field in scan angle degrees.
+    x : float
+        X-coordinate of the center of the field in scan angle degrees.
+    height_in_degrees : float
+        Height of the field in degrees of the scan angle.
+    width_in_degrees : float
+        Width of the field in degrees of the scan angle.
+
+    """
+    def __init__(self, height_px=None, width_px=None, depth=None, y_center_coordinate=None, x_center_coordinate=None,
                  height_in_degrees=None, width_in_degrees=None):
-        self.height = height
-        self.width = width
+        """
+        Initialize a scanfield with dimensions and position.
+
+        Parameters
+        ----------
+        height_px : int, optional
+            Height of the field in pixels.
+        width_px : int, optional
+            Width of the field in pixels.
+        depth : float, optional
+            Depth of the field in microns.
+        y_center_coordinate : float, optional
+            Y-coordinate of the center in scan angle degrees.
+        x_center_coordinate : float, optional
+            X-coordinate of the center in scan angle degrees.
+        height_in_degrees : float, optional
+            Height of the field in scan angle degrees.
+        width_in_degrees : float, optional
+            Width of the field in scan angle degrees.
+        """
+        self.height_px = height_px
+        self.width_px = width_px
         self.depth = depth
-        self.y = y
-        self.x = x
+        self.y_center_coordinate = y_center_coordinate
+        self.x_center_coordinate = x_center_coordinate
         self.height_in_degrees = height_in_degrees
         self.width_in_degrees = width_in_degrees
 
     def as_field(self):
-        return Field(height=self.height, width=self.width, depth=self.depth, y=self.y,
-                     x=self.x, height_in_degrees=self.height_in_degrees,
+        """
+        Convert this Scanfield into a Field object.
+
+        Returns
+        -------
+        Field
+            A new Field object with attributes copied from this Scanfield.
+        """
+        return Field(height_px=self.height_px, width_px=self.width_px, depth=self.depth, y_center_coordinate=self.y_center_coordinate,
+                     x_center_coordinate=self.x_center_coordinate, height_in_degrees=self.height_in_degrees,
                      width_in_degrees=self.width_in_degrees)
 
 
 class Field(Scanfield):
-    """ Two-dimensional scanning plane. An extension of scanfield with some functionality.
-
-    Attributes:
-        height: height of the field in pixels.
-        width: width of the field in pixels.
-        depth: depth at which this field was recorded (in microns relative to absolute z).
-        y, x: Coordinates of the center of the field in the scan (in scan angle degrees).
-        height_in_degrees: height of the field in degrees of the scan angle.
-        width_in_degrees: width of the field in degrees of the scan angle.
-        yslices: list of slices. How to slice the page in the y axis to get this field.
-        xslices: list of slices. How to slice the page in the x axis to get this field.
-            For now, all fields have the same width so all xslices are slice(None).
-        output_yslices: list of slices. Where to paste this field in the output field.
-        output_xslices: list of slices. Where to paste this field in the output field.
-        slice_id: index of the slice in the scan to which this field belongs.
-        roi_ids: list of ROI indices to which each subfield belongs (one if single field).
-        offsets: list of masks with time offsets per pixel (seconds, one if single field).
-
-    Example:
-        output_field[output_yslice, output_xslice] = page[yslice, xslice]
-
-    When a field is formed by joining two or more subfields (via join_contiguous), the
-    slice lists hold two or more slices representing where each subfield will be taken
-    from the page and inserted in the (joint) output field. Attributes height, width, x,
-    y, height_in_degrees and width_in_degrees are adjusted accordingly. For non-contiguous
-    fields, each slice list has a single slice.
-
-     Note:
-        Slices in xslices, yslices, output_xslices and output_yslices hold two promises:
-            step = 1 (fields are contiguous)
-            stop = start + height|width
-        In theory, we only need x_start and y_start but slices simplify operations.
-
     """
-    def __init__(self, height=None, width=None, depth=None, y=None, x=None,
+    Represents a two-dimensional scanning plane, an extension of a scanfield with additional functionalities.
+
+    Inherits all attributes from Scanfield and adds slicing information for integration into larger datasets.
+
+    Attributes
+    ----------
+    yslices : list of slice
+        Slices defining how to cut the page in the Y-axis to retrieve this field.
+    xslices : list of slice
+        Slices defining how to cut the page in the X-axis to retrieve this field.
+    output_yslices : list of slice
+        Slices defining where to paste this field in the output.
+    output_xslices : list of slice
+        Slices defining where to paste this field in the output.
+    slice_id : int
+        Index of the slice in the scan to which this field belongs.
+    roi_ids : list of int
+        List of ROI indices to which each subfield belongs.
+    offsets : list of float
+        Time offsets per pixel in seconds for each subfield.
+
+    Example
+    -------
+    Assuming a setup where each page represents a different depth and each ROI is a different region,
+    you can extract and manipulate specific fields as follows:
+
+        field = roi.get_field_at(depth)
+        output_field[field.output_yslices, field.output_xslices] = page[field.yslices, field.xslices]
+
+    Notes
+    -----
+    - When a field is formed by joining two or more subfields (via join_contiguous), the slice lists
+      hold multiple slices representing where each subfield will be taken from the page and inserted
+      into the (joint) output field.
+    - For non-contiguous fields, each slice list has a single slice.
+    - The attributes `height_px`, `width_px`, `x_center_coordinate`, `y_center_coordinate`, `height_in_degrees`, and `width_in_degrees` are adjusted
+      accordingly when fields are joined.
+    """
+    def __init__(self, height_px=None, width_px=None, depth=None, y_center_coordinate=None, x_center_coordinate=None,
                  height_in_degrees=None, width_in_degrees=None, yslices=None,
                  xslices=None, output_yslices=None, output_xslices=None, slice_id=None,
                  roi_ids=None, offsets=None):
-        self.height = height
-        self.width = width
-        self.depth = depth
-        self.y = y
-        self.x = x
+        """
+        Initialize a field with dimensions and position.
+
+        Parameters
+        ----------
+        height_px : int, optional
+            Height of the field in pixels.
+        width_px : int, optional
+            Width of the field in pixels.
+        depth : float, optional
+            Depth of the field in microns.
+        y_center_coordinate : float, optional
+            Y-coordinate of the center in scan angle degrees.
+        x_center_coordinate : float, optional
+            X-coordinate of the center in scan angle degrees.
+        height_in_degrees : float, optional
+            Height of the field in scan angle degrees.
+        width_in_degrees : float, optional
+            Width of the field in scan angle degrees.
+        yslices : list of slice, optional
+            Slices defining how to cut the page in the Y-axis to retrieve this field.
+        xslices : list of slice, optional
+            Slices defining how to cut the page in the X-axis to retrieve this field.
+        output_yslices : list of slice, optional
+            Slices defining where to paste this field in the output.
+        output_xslices : list of slice, optional
+            Slices defining where to paste this field in the output.
+        slice_id : int, optional
+            Index of the slice in the scan to which this field belongs.
+        roi_ids : list of int, optional
+            List of ROI indices to which each subfield belongs.
+        offsets : list of float, optional
+            Time offsets per pixel in seconds for each subfield.
+
+        .. note::
+            The `yslices`, `xslices`, `output_yslices`, `output_xslices`, `roi_ids`, and `offsets` attributes
+            are optional and can be set later.
+        """
+        self.height_px = height_px  # original scanfield height_px.
+        self.width_px = width_px
+        self.depth = depth  # TODO: sync this attribute with the axial distance between planes
+        self.y_center_coordinate = y_center_coordinate
+        self.x_center_coordinate = x_center_coordinate
         self.height_in_degrees = height_in_degrees
         self.width_in_degrees = width_in_degrees
         self.yslices = yslices
@@ -209,7 +324,7 @@ class Field(Scanfield):
     @property
     def roi_mask(self):
         """ Mask of the size of the field. Each pixel shows the ROI from where it comes."""
-        mask = np.full([self.height, self.width], -1, dtype=np.int8)
+        mask = np.full([self.height_px, self.width_px], -1, dtype=np.int8)
         for roi_id, output_yslice, output_xslice in zip(self.roi_ids, self.output_yslices,
                                                         self.output_xslices):
             mask[output_yslice, output_xslice] = roi_id
@@ -218,7 +333,7 @@ class Field(Scanfield):
     @property
     def offset_mask(self):
         """ Mask of the size of the field. Each pixel shows its time offset in seconds."""
-        mask = np.full([self.height, self.width], -1, dtype=np.float32)
+        mask = np.full([self.height_px, self.width_px], -1, dtype=np.float32)
         for offsets, output_yslice, output_xslice in zip(self.offsets, self.output_yslices,
                                                         self.output_xslices):
             mask[output_yslice, output_xslice] = offsets
@@ -237,17 +352,16 @@ class Field(Scanfield):
         position = Position.NONCONTIGUOUS
         if np.isclose(self.width_in_degrees, field2.width_in_degrees):
             expected_distance = self.height_in_degrees / 2 + field2.height_in_degrees / 2
-            if np.isclose(self.y, field2.y + expected_distance):
+            if np.isclose(self.y_center_coordinate, field2.y_center_coordinate + expected_distance):
                 position = Position.ABOVE
-            if np.isclose(field2.y, self.y + expected_distance):
+            if np.isclose(field2.y_center_coordinate, self.y_center_coordinate + expected_distance):
                 position = Position.BELOW
         if np.isclose(self.height_in_degrees, field2.height_in_degrees):
             expected_distance = self.width_in_degrees / 2 + field2.width_in_degrees / 2
-            if np.isclose(self.x, field2.x + expected_distance):
+            if np.isclose(self.x_center_coordinate, field2.x_center_coordinate + expected_distance):
                 position = Position.LEFT
-            if np.isclose(field2.x, self.x + expected_distance):
+            else:
                 position = Position.RIGHT
-
         return position
 
     def is_contiguous_to(self, field2):
@@ -255,48 +369,47 @@ class Field(Scanfield):
         return not (self._type_of_contiguity(field2) == Position.NONCONTIGUOUS)
 
     def join_with(self, field2):
-        """ Update attributes of this field to incorporate field2. Field2 is NOT changed.
+        """
+        Update attributes of this field to incorporate field2. Field2 is NOT changed.
 
         Args:
             field2: A second field object.
         """
         contiguity = self._type_of_contiguity(field2)
-        if contiguity in [Position.ABOVE, Position.BELOW]:  # contiguous in y axis
+        if contiguity in [Position.ABOVE, Position.BELOW]:  # contiguous in y_center_coordinate axis
             # Compute some specific attributes
             if contiguity == Position.ABOVE:  # field2 is above/atop self
-                new_y = field2.y + (self.height_in_degrees / 2)
-                output_yslices1 = [slice(s.start + field2.height, s.stop + field2.height)
+                new_y = field2.y_center_coordinate + (self.height_in_degrees / 2)
+                output_yslices1 = [slice(s.start + field2.height_px, s.stop + field2.height_px)
                                    for s in self.output_yslices]
                 output_yslices2 = field2.output_yslices
             else:  # field2 is below self
-                new_y = self.y + (field2.height_in_degrees / 2)
+                new_y = self.y_center_coordinate + (field2.height_in_degrees / 2)
                 output_yslices1 = self.output_yslices
-                output_yslices2 = [slice(s.start + self.height, s.stop + self.height) for
+                output_yslices2 = [slice(s.start + self.height_px, s.stop + self.height_px) for
                                    s in field2.output_yslices]
-
             # Set new attributes
-            self.y = new_y
-            self.height += field2.height
+            self.y_center_coordinate = new_y
+            self.height_px += field2.height_px
             self.height_in_degrees += field2.height_in_degrees
             self.output_yslices = output_yslices1 + output_yslices2
             self.output_xslices = self.output_xslices + field2.output_xslices
-
-        if contiguity in [Position.LEFT, Position.RIGHT]:  # contiguous in x axis
+        if contiguity in [Position.LEFT, Position.RIGHT]:  # contiguous in x_center_coordinate axis
             # Compute some specific attributes
             if contiguity == Position.LEFT:  # field2 is to the left of self
-                new_x = field2.x + (self.width_in_degrees / 2)
-                output_xslices1 = [slice(s.start + field2.width, s.stop + field2.width)
+                new_x = field2.x_center_coordinate + (self.width_in_degrees / 2)
+                output_xslices1 = [slice(s.start + field2.width_px, s.stop + field2.width_px)
                                    for s in self.output_xslices]
                 output_xslices2 = field2.output_xslices
             else:  # field2 is to the right of self
-                new_x = self.x + (field2.width_in_degrees / 2)
+                new_x = self.x_center_coordinate + (field2.width_in_degrees / 2)
                 output_xslices1 = self.output_xslices
-                output_xslices2 = [slice(s.start + self.width, s.stop + self.width) for s
+                output_xslices2 = [slice(s.start + self.width_px, s.stop + self.width_px) for s
                                    in field2.output_xslices]
 
             # Set new attributes
-            self.x = new_x
-            self.width += field2.width
+            self.x_center_coordinate = new_x
+            self.width_px += field2.width_px
             self.width_in_degrees += field2.width_in_degrees
             self.output_yslices = self.output_yslices + field2.output_yslices
             self.output_xslices = output_xslices1 + output_xslices2

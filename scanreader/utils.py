@@ -27,11 +27,14 @@ def fill_key(key, num_dimensions):
 
 
 def check_index_type(axis, index):
-    """ Checks that index is an integer, slice or array/list/tuple of integers.
+    """ 
+    Checks that index is an integer, slice or array/list/tuple of integers.
 
-    Args:
-        axis: An integer. Axis of the index.
-        index: A single index (integer, slice or list/tuple/array of integers).
+    Parameters:
+        axis: int
+            Axis of the specified index.
+        index: int | tuple | np.ndarray
+            Index to inspect.
 
     Raises:
         TypeError: If index is not integer, slice, or array/list/tuple of integers.
@@ -58,13 +61,19 @@ def _index_has_valid_type(index):
 
 
 def check_index_is_in_bounds(axis, index, dim_size):
-    """ Check that an index is in bounds for the given dimension size. By python indexing
-    rules, anything from -dim_size to dim_size-1 is valid.
+    """
+    Check that an index is in bounds for the given dimension size.
 
-    Args:
-        axis: An integer. Axis of the index.
-        index: A single index (integer, slice or list/tuple/array of integers).
-        dim_size: Size of the dimension against which the index will be checked.
+    By python indexing rules, anything from -dim_size to dim_size-1 is valid.
+
+    Parameters:
+    -----------
+        axis: int
+            Axis of the index.
+        index: int | list | slice
+            Index to check.
+        dim_size: int
+            Size of the dimension against which the index will be checked.
 
     Raises:
         TypeError: If index is not either integer, slice, or array.
