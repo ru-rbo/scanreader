@@ -1,3 +1,9 @@
 data/
 __pycache__/
 .idea/
+.idea/
+.vscode/
+exclude/
+_build/
+doctrees/
+*DS_Store*
