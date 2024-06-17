@@ -8,10 +8,10 @@ Welcome to scanreader's documentation!
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: Section Navigation:
 
-    guide
-    api
+    guide <user_guide/index>
+    API <api/index>
 
 Indices and tables
 ==================
