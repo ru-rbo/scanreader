@@ -11,7 +11,7 @@ Welcome to scanreader's documentation!
    :caption: Contents:
 
     guide
-    .. api
+    api
 
 Indices and tables
 ==================
