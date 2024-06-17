@@ -1,9 +1,9 @@
 data/
 __pycache__/
 .idea/
-.idea/
 .vscode/
 exclude/
 _build/
+build/
 doctrees/
 *DS_Store*
